@@ -43,6 +43,7 @@ db.BoughtProduct = db.sequelize.import('./bought-product.js');
 db.Carts = db.sequelize.import('./cart.js');
 db.Admin = db.sequelize.import('./comments.js');
 db.Ratings = db.sequelize.import('./ratings.js');
+db.VerficationToken = db.sequelize.import('./verificationtoken.js');
 
 db.Categories.hasMany(db.Products, {as: 'Categories', foreignKey: 'category_id'});
 db.Products.belongsTo(db.Categories, {foreignKey: 'category_id'});
@@ -64,5 +65,6 @@ db.Users.hasMany(db.Ratings, {as: 'users', foreignKey: 'user_id'});
 db.Ratings.belongsTo(db.Users, {foreignKey: 'user_id'});
 db.Products.hasMany(db.Ratings, {as: 'PROducts',foreignKey: 'product_id'});
 db.Ratings.belongsTo(db.Products, {foreignKey: 'product_id'});
+db.VerficationToken.belongsTo(db.Vendors, {as: "vendor", foreignKey: "vendorId", foreignKeyConstraint: true});
 
 module.exports = db;

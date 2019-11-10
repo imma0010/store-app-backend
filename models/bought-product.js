@@ -4,6 +4,14 @@ module.exports = (sequelize, DataTypes) => {
     id: {
       type: DataTypes.INTEGER,
       primaryKey: true
+    },
+    isDelivered: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false
+    }, 
+    isReceived: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false
     }
   }, {});
   return bought_product;

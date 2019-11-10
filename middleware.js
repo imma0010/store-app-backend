@@ -27,6 +27,9 @@ let checkToken = (req, res, next) => {
                     });
                 } else {
                     req.decoded = decoded;
+                    username = decoded.username;
+                    console.log('Username' + username);
+                    console.log('Decoded Request:' + JSON.stringify(decoded));
                     next();
                 }
             });

@@ -28,6 +28,10 @@ module.exports = {
         type: Sequelize.STRING,
         allowNull: false
       },
+      isVerified: {
+        type: Sequelize.BOOLEAN,
+        allowNull: false
+      },
       createdAt: {
         allowNull: false,
         type: Sequelize.DATE
