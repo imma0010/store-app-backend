@@ -26,6 +26,14 @@ module.exports = {
         allowNull: false,
         onDelete: 'CASCADE'
       },
+      isDelivered: {
+        allowNull: false,
+        type: Sequelize.BOOLEAN
+      },
+      isReceived: {
+        allowNull: false,
+        type: Sequelize.BOOLEAN
+      },
       createdAt: {
         allowNull: false,
         type: Sequelize.DATE

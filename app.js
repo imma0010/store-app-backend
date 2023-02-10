@@ -6,6 +6,12 @@ var multer = require('multer');
 var session = require('express-session');
 var handlers = require('./handleGenerator');
 var middleware = require('./middleware');
+var jwt = require('jsonwebtoken');
+var config = require('./config');
+var crypto = require('crypto-random-string');
+var sendEmail = require('./emailverification');
+var sequelize = require('sequelize');
+var op = sequelize.Op;
 
 var app = express();
 
@@ -40,7 +46,7 @@ var storage = multer.diskStorage({
 
 var upload = multer({ storage : storage }).array('image', 4);
 
-app.post('/categories', (req, res) => {
+app.post('/categories', (req, res, ) => {
     const name = req.body.name;
     const description = req.body.description;
     models.Categories.create({
@@ -102,8 +108,7 @@ app.post('/users', (req, res) => {
         contact: req.body.contact,
         email: req.body.email,
         password: req.body.password
-    }).then(newUsers => {
-            delete newUsers['password'];
+    }, {attributes: ['id', 'username', 'first_name', 'last_name', 'address', 'contact', 'email']}).then(newUsers => {
             res.json(newUsers);
         });
 });
@@ -155,29 +160,173 @@ app.delete('/users/:id', (req, res) => {
 });
 
 app.post('/vendors', (req, res) => {
-    models.Vendors.create({
-        name: req.body.name,
-        address: req.body.address,
-        contact: req.body.contact,
-        email: req.body.email,
-        password: req.body.password
+    req.body.isVerified = false;
+    models.Vendors.findOrCreate({
+        where: {email: req.body.email},
+        defaults: req.body
     })
-        .then(newVendors => {
-            delete newVendors['password'];
-            res.json(
-                newVendors
-                /*{
-                "success": true,
-                "message": "Vendor Created Successfully"
-            }*/);
-        });
+    .spread((vendor, created) => {
+        if(!created) {
+            res.json({
+                success: false,
+                message: 'Vendor with email address already exists'
+            });
+        } else {
+            console.log('Created', JSON.stringify(created));
+            models.Vendors.findOne({
+                where: {email: req.body.email},
+                attributes: ['id', 'email']
+            }).then(vendor => {
+                if(vendor === null) {
+                    res.json({
+                        success: false,
+                        message: "Vendor with given email already exists"
+                    });
+                } else {
+                    models.VerficationToken.create({
+                        vendorId: vendor.id,
+                        token: crypto({length: 10})
+                    }).then((result) => {
+                        sendEmail.data.sendVerificationEmail(req.body.email, result.token);
+                        res.json({
+                            success: true,
+                            message: `${vendor.email} account created successfully`
+                        });
+                    }).catch((error) => {
+                        res.status(500).json(error);
+                    });
+                }
+            });
+        }
+    }).catch((error) => {
+        res.status(500).json(error);
+    });
+        // .then(newVendors => {
+        //     delete newVendors['password'];
+        //     res.json(
+        //         newVendors
+        //         /*{
+        //         "success": true,
+        //         "message": "Vendor Created Successfully"
+        //     }*/);
+        // });
 });
 
-app.get('/vendors', (req, res) => {
-   models.Vendors.findAll()
+app.get('/verification', (req, res) => {
+    models.Vendors.findOne({
+        where: {email: req.query.email}
+    }).then(vendor => {
+        if(vendor.isVerified) {
+            res.status(202).json('Email Already Verified');
+        } else {
+            models.VerficationToken.findOne({
+                where: {token: req.query.token}
+            }).then((foundToken) => {
+                if(foundToken) {
+                    vendor.update({isVerified: true})
+                    .then(updatedVendor => {
+                        res.status(403).json(`Vendor with ${vendor.email} has been verified`);
+                    })
+                    .catch(reason => {
+                        return res.status(403).json('Verification Failed');
+                    });
+                } else {
+                    res.status(404).json('Token Expired');
+                }
+            }).catch(reason => {
+                res.status(404).json('Token Expired');
+            });
+        }
+    });
+});
+
+app.get('/vendors',  (req, res) => {
+   models.Vendors.findAll({attributes: ['id', 'name', 'address', 'contact', 'email', 'createdAt', 'updatedAt'], where: {isVerified: true}})
        .then(vendors => {
            res.json(vendors);
        })
+});
+
+app.get('/myproducts', middleware.checkToken, function(req, res) {
+    let token = req.get('Authorization');
+    if(token.startsWith('Bearer ')){
+        token = token.slice(7, token.length);
+        if(token) {
+            jwt.verify(token, config.secret, (err, decoded) => {
+                if (err) {
+                    return res.json({
+                        success: false,
+                        message: 'Token is not valid'
+                    });
+                } else {
+                    req.decoded = decoded;
+                    console.log('Username: ' + decoded.email); 
+                    models.Vendors.findOne({attributes: ['id', 'name', 'email'], where: {email: decoded.email}}).then(
+                        vendor => {
+                            if(vendor === null) {
+
+                            } else {
+                                models.Products.findAll({where: {vendor_id: vendor.id}}).then(
+                                    products => {
+                                        res.json(products);
+                                    }
+                                );
+                            }
+                        }
+                    )
+                }
+            });
+        } else {
+            return res.json({
+                success: false,
+                message: 'Auth Token is not supplied'
+            });
+        }
+    }
+});
+
+app.get('/info', middleware.checkToken, function(req, res) {
+    let token = req.get('Authorization');
+    if(token.startsWith('Bearer ')){
+        token = token.slice(7, token.length);
+        if(token) {
+            jwt.verify(token, config.secret, (err, decoded) => {
+                if (err) {
+                    return res.json({
+                        success: false,
+                        message: 'Token is not valid'
+                    });
+                } else {
+                    req.decoded = decoded;
+                    console.log('Username: ' + decoded.username);
+                    if(decoded.username === undefined) {
+                        models.Vendors.findOne({attributes: ['id', 'name', 'email'], where: {email: decoded.email}}).then(
+                            vendor => {
+                                res.json({
+                                    data: vendor,
+                                    role: 'vendor'
+                                })
+                            }
+                        )
+                    } else {
+                        models.Users.findOne({attributes: ['id', 'username'], where: {username: decoded.username}}).then(
+                            user => {
+                                res.json({
+                                    data: user,
+                                    role: 'user'
+                                })
+                            }
+                        )   
+                    }
+                }
+            });
+        } else {
+            return res.json({
+                success: false,
+                message: 'Auth Token is not supplied'
+            });
+        }
+    }
 });
 
 app.get('/vendors/:id', (req, res) => {
@@ -216,35 +365,66 @@ app.delete('/vendors/:id', (req, res) => {
     })
 });
 
-app.post('/products', (req, res) => {
-    upload(req, res, function(err) {
-        if(err) {
-            console.log(err);
-            console.log('Files', req.files);
-            return res.end("Error Uploading File");
+app.post('/products', middleware.checkToken, function(req, res) {
+    let token = req.get('Authorization');
+    if(token.startsWith('Bearer ')){
+        token = token.slice(7, token.length);
+        if(token) {
+            jwt.verify(token, config.secret, (err, decoded) => {
+                if (err) {
+                    return res.json({
+                        success: false,
+                        message: 'Token is not valid'
+                    });
+                } else {
+                    req.decoded = decoded;
+                    console.log('Username: ' + decoded.email);
+                    models.Vendors.findOne({attributes: ['id', 'email'], where: {email: decoded.email, isVerified: true}}).then(
+                        vendor => {
+                            console.log('Vendor Id: ' + vendor.id);
+                            upload(req, res, function(err) {
+                                if(err) {
+                                    console.log(err);
+                                    console.log('Files', req.files);
+                                    return res.end("Error Uploading File");
+                                } else {
+                                    console.log(req.body);
+                                    console.log('File is uploaded', req.files);
+                                    console.log(JSON.stringify(vendor));
+                                    console.log("Dates " + dates);
+                                    models.Products.create({
+                                        name: req.body.name,
+                                        price: req.body.price,
+                                        description: req.body.description,
+                                        rating: 0,
+                                        vendor_id: vendor.id,
+                                        category_id: req.body.category_id,
+                                        image: dates.join(" ")
+                                    }).then(newProducts => {
+                                        res.json({
+                                            success: true,
+                                            message: "Product Added Successfully!"
+                                        });
+                                    });
+                                }
+                                console.log('Date', dates);
+                                dates = [];
+                            });
+                        }
+                    )
+                }
+            });
         } else {
-            console.log(req.body);
-            console.log('File is uploaded', req.files);
-            console.log("Dates " + dates);
-            models.Products.create({
-                name: req.body.name,
-                price: req.body.price,
-                description: req.body.description,
-                rating: req.body.rating,
-                vendor_id: req.body.vendor_id,
-                category_id: req.body.category_id,
-                image: dates.join(" ")
-            }).then(newProducts => {
-                res.json(newProducts);
+            return res.json({
+                success: false,
+                message: 'Only Vendors can add product'
             });
         }
-        console.log('Date', dates);
-        dates = [];
-    });
+    }
 });
 
-app.get('/products', (req, res) => {
-   models.Products.findAll()
+app.get('/products', function(req, res) {
+   models.Products.findAll({include: [{model: models.Vendors, attributes: ['name']}]})
        .then(products => {
            res.json(products);
        })
@@ -264,7 +444,7 @@ app.get('/products/search/:searchName', (req, res) => {
     const searchName = '%' + req.params.searchName.toLowerCase() + '%';
     console.log("Search Parameter: " + req.params.searchName);
     models.Products.findAll({
-        where: ["title like ?", '%' + searchName + '%']
+        where: {name: {[op.like]: '%' + searchName + '%'}}
     }).then(products => {
         res.json(products);
     });
